@@ -7,3 +7,5 @@ chroma_db/
 .streamlit/secrets.toml
 .DS_Store
 '@ | Set-Content -Encoding utf8 .gitignorechroma_db_backup/
+
+chroma_db_backup/
