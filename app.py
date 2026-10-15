@@ -357,27 +357,38 @@ def get_gemini_client():
 # --------------------------------------------------
 
 
+
 def generate_answer(question, retrieved_context):
     question_lower = question.lower()
     normalized = question_lower.replace("-", " ")
+    normalized = " ".join(normalized.split())
 
-    if (
-        "success rate" in question_lower
-        or "every patient" in question_lower
-        or "percentage of patients cured" in question_lower
-        or "chances of success" in question_lower
-        or "how effective is this treatment" in question_lower
-        or "treatment effectiveness" in question_lower
-    ):
+    # --------------------------------------------------
+    # 1. Handle success-rate questions safely.
+    # --------------------------------------------------
+    success_rate_phrases = (
+        "success rate",
+        "cure rate",
+        "every patient",
+        "percentage of patients cured",
+        "chances of success",
+        "what are the chances of success",
+        "how effective is this treatment",
+        "treatment effectiveness",
+    )
+
+    if any(phrase in normalized for phrase in success_rate_phrases):
         return (
-            "The selected PlacidWay pages do not provide a "
-            "verified success rate for this treatment. Outcomes "
-            "vary by patient, and this chatbot cannot predict "
-            "individual results. Please discuss expected benefits, "
-            "risks, and available evidence with a qualified oncologist."
+            "The selected PlacidWay pages do not provide a verified "
+            "success rate for this treatment. Outcomes vary by patient, "
+            "and this chatbot cannot predict individual results. Please "
+            "discuss expected benefits, risks, and available evidence "
+            "with a qualified oncologist."
         )
 
-    # 1. Refuse personalized medical recommendations.
+    # --------------------------------------------------
+    # 2. Refuse personalized medical recommendations.
+    # --------------------------------------------------
     medical_phrases = (
         "which treatment should i choose",
         "what treatment should i choose",
@@ -396,19 +407,18 @@ def generate_answer(question, retrieved_context):
         "what is my diagnosis",
     )
 
-    if any(phrase in question_lower for phrase in medical_phrases):
+    if any(phrase in normalized for phrase in medical_phrases):
         return (
             "I can't recommend or select a cancer treatment for you. "
             "Treatment decisions depend on your individual medical "
             "situation and should be discussed with a qualified "
-            "oncologist. This chatbot provides information from "
-            "selected PlacidWay pages and does not provide medical advice."
+            "oncologist. This chatbot provides information from selected "
+            "PlacidWay pages and does not provide medical advice."
         )
 
-    # Additional safety guard for personalized cancer-treatment advice.
     if (
-        "cancer treatment" in question_lower
-        and any(term in question_lower for term in (
+        "cancer treatment" in normalized
+        and any(term in normalized for term in (
             "recommend",
             "should i choose",
             "best for me",
@@ -419,11 +429,13 @@ def generate_answer(question, retrieved_context):
             "I can't recommend or select a cancer treatment for you. "
             "Treatment decisions depend on your individual medical "
             "situation and should be discussed with a qualified "
-            "oncologist. This chatbot provides information from "
-            "selected PlacidWay pages and does not provide medical advice."
+            "oncologist. This chatbot provides information from selected "
+            "PlacidWay pages and does not provide medical advice."
         )
 
-    # 2. Reject unrelated questions without calling Gemini.
+    # --------------------------------------------------
+    # 3. Reject unrelated questions without calling Gemini.
+    # --------------------------------------------------
     sports_terms = (
         "football",
         "soccer",
@@ -433,13 +445,13 @@ def generate_answer(question, retrieved_context):
         "tennis",
     )
 
-    if any(term in question_lower for term in sports_terms):
+    if any(term in normalized for term in sports_terms):
         return (
             "Sports results are outside the scope of this chatbot, "
             "which answers questions using selected PlacidWay website pages."
         )
 
-    if any(word in question_lower for word in (
+    if any(word in normalized for word in (
         "weather", "temperature", "forecast"
     )):
         return (
@@ -447,15 +459,31 @@ def generate_answer(question, retrieved_context):
             "which answers questions using selected PlacidWay website pages."
         )
 
-    # 3. Never claim a treatment guarantees a cure or success.
+    # --------------------------------------------------
+    # 4. Handle treatment cure and outcome questions safely.
+    # --------------------------------------------------
+    asks_cure_question = (
+        any(term in normalized for term in ("cure", "cured"))
+        and any(term in normalized for term in (
+            "cancer", "treatment", "therapy", "this condition"
+        ))
+    )
+
+    if asks_cure_question:
+        return (
+            "The selected PlacidWay pages do not establish that this "
+            "treatment can cure cancer. This chatbot cannot promise or "
+            "predict an individual medical outcome. Please discuss the "
+            "treatment's evidence, potential benefits, and risks with "
+            "a qualified oncologist."
+        )
+
     outcome_phrases = (
         "guarantee a cure",
         "guaranteed cure",
-        "cure cancer",
         "will it cure",
         "will this cure",
         "guaranteed to cure",
-        "guarantee that the treatment will cure",
         "guaranteed to be successful",
         "guaranteed successful",
         "guarantee success",
@@ -468,11 +496,16 @@ def generate_answer(question, retrieved_context):
     )
 
     asks_about_outcomes = any(
-        phrase in question_lower for phrase in outcome_phrases
+        phrase in normalized for phrase in outcome_phrases
     ) or (
-        "guarantee" in question_lower
-        and any(term in question_lower for term in (
-            "treatment", "program", "patient", "cured", "successful", "success"
+        "guarantee" in normalized
+        and any(term in normalized for term in (
+            "treatment",
+            "program",
+            "patient",
+            "cured",
+            "successful",
+            "success",
         ))
     )
 
@@ -485,13 +518,41 @@ def generate_answer(question, retrieved_context):
             "oncologist."
         )
 
-    # 4. Answer phone-number questions only when a labelled number is found.
-    asks_phone = any(phrase in question_lower for phrase in (
+    # --------------------------------------------------
+    # 5. Handle payment-plan questions without Gemini.
+    # --------------------------------------------------
+    payment_terms = (
+        "installment",
+        "installments",
+        "monthly payment",
+        "monthly payments",
+        "payment plan",
+        "payment plans",
+        "pay monthly",
+        "pay in installments",
+        "pay by installments",
+        "financing options",
+        "finance the treatment",
+        "financing the treatment",
+    )
+
+    if any(term in normalized for term in payment_terms):
+        return (
+            "The selected PlacidWay pages do not confirm whether "
+            "monthly installments, financing, or payment plans are "
+            "available. Please contact PlacidWay or ITC Immunity "
+            "Therapy Center to confirm the available payment options."
+        )
+
+    # --------------------------------------------------
+    # 6. Answer phone-number questions only when a labelled
+    #    number is found in the stored source text.
+    # --------------------------------------------------
+    asks_phone = any(phrase in normalized for phrase in (
         "phone number",
         "telephone number",
         "itc phone",
         "itc's phone",
-        "itc’s phone",
         "phone number of itc",
         "how can i call itc",
         "contact number",
@@ -523,6 +584,7 @@ def generate_answer(question, retrieved_context):
                 phone_chunk["metadata"].get("page_title")
                 or "the selected PlacidWay page"
             )
+
             return (
                 f"The phone number explicitly listed in {title} "
                 f"is {number}. [1]"
@@ -535,38 +597,46 @@ def generate_answer(question, retrieved_context):
             "relevant PlacidWay page."
         )
 
-    # 5. Identify price-related questions and load the source chunks.
-    asks_price = any(term in question_lower for term in (
-        "price", "cost", "how much", "package"
-    )) or "5000" in question_lower or "5,000" in question_lower
+    # --------------------------------------------------
+    # 7. Load source chunks for price and program questions.
+    # --------------------------------------------------
+    asks_price = any(term in normalized for term in (
+        "price",
+        "cost",
+        "how much",
+        "package",
+    )) or "5000" in normalized or "5,000" in normalized
 
     asks_wrong_price = (
-        "5000" in question_lower or "5,000" in question_lower
+        "5000" in normalized or "5,000" in normalized
+    )
+
+    asks_inpatient_program = (
+        "inpatient" in normalized or "in patient" in normalized
+    )
+
+    asks_outpatient_program = (
+        "outpatient" in normalized or "out patient" in normalized
     )
 
     all_chunks = None
 
-    if (
-        asks_price
-        or "inpatient" in normalized
-        or "outpatient" in normalized
-    ):
+    if asks_price or asks_inpatient_program or asks_outpatient_program:
         all_chunks = get_all_chunks()
 
     price_chunk = find_chunk(all_chunks or [], is_price_table)
 
-    asks_anal_price = "anal cancer" in question_lower and asks_price
+    asks_anal_price = "anal cancer" in normalized and asks_price
 
     asks_both_prices = (
         asks_price
-        and "inpatient" in normalized
-        and "outpatient" in normalized
+        and asks_inpatient_program
+        and asks_outpatient_program
     )
 
-    # Handle price differences BEFORE the general price comparison.
-    # Keep this handler in only one place.
+    # Handle price differences before other price comparisons.
     asks_price_difference = any(
-        term in question_lower
+        term in normalized
         for term in (
             "price difference",
             "how much more",
@@ -584,7 +654,7 @@ def generate_answer(question, retrieved_context):
     if asks_price_difference and price_chunk:
         put_first(price_chunk, retrieved_context)
 
-        if any(term in question_lower for term in (
+        if any(term in normalized for term in (
             "difference",
             "how much more",
             "how much less",
@@ -602,7 +672,6 @@ def generate_answer(question, retrieved_context):
             "compared with USD 30,000 for the In-Patient Program. [1]"
         )
 
-    # Answer questions asking for both program prices.
     if asks_both_prices and price_chunk:
         put_first(price_chunk, retrieved_context)
         return (
@@ -611,7 +680,6 @@ def generate_answer(question, retrieved_context):
             "In-Patient Program: USD 30,000. [1]"
         )
 
-    # Answer the incorrect-price test without inventing a price.
     if asks_wrong_price and price_chunk:
         put_first(price_chunk, retrieved_context)
         return (
@@ -630,15 +698,18 @@ def generate_answer(question, retrieved_context):
             "not a separate price based on anal cancer alone. [1]"
         )
 
-    
-    # Answer program duration questions without relying on Gemini.
-    asks_duration = any(term in question_lower for term in (
+    # --------------------------------------------------
+    # 8. Answer program-duration questions deterministically.
+    # --------------------------------------------------
+    asks_duration = any(term in normalized for term in (
         "how long",
         "duration",
         "how many weeks",
+        "how many days",
         "how long do both programs last",
         "how long does each program last",
         "how long is the program",
+        "how long does the program last",
     ))
 
     if asks_duration:
@@ -660,84 +731,147 @@ def generate_answer(question, retrieved_context):
                 "are both 3 weeks long. [1]"
             )
 
-        return FALLBACK_ANSWER
-
-    if asks_duration and price_chunk:
-        put_first(price_chunk, retrieved_context)
         return (
-            "The documented In-Patient and Out-Patient Programs "
-            "are both 3 weeks long. [1]"
+            "I couldn't verify the program duration in the selected "
+            "source information. Please consult the relevant PlacidWay "
+            "program page for confirmation."
         )
 
-    # 5.2 Answer inpatient inclusion questions.
+    # --------------------------------------------------
+    # 9. Handle outpatient inclusions separately.
+    #    Never reuse inpatient inclusions for outpatient questions.
+    # --------------------------------------------------
     inclusion_terms = (
-        "include", "included", "includes", "inclusion",
-        "meal", "meals", "accommodation", "follow-up",
-        "follow up", "medication", "medications",
-        "imaging", "laboratory", "lab test", "nursing care",
+        "include",
+        "included",
+        "includes",
+        "inclusion",
+        "inclusions",
+        "meal",
+        "meals",
+        "food",
+        "accommodation",
+        "follow-up",
+        "follow up",
+        "medication",
+        "medications",
+        "imaging",
+        "laboratory",
+        "lab test",
+        "lab tests",
+        "nursing care",
+        "what is provided",
+        "what is covered",
     )
 
     asks_inclusions = any(
-        term in question_lower for term in inclusion_terms
+        term in normalized for term in inclusion_terms
     ) and (
-        "inpatient" in normalized
-        or "package" in question_lower
-        or "program" in question_lower
-        or "meal" in question_lower
-        or "accommodation" in question_lower
-        or "follow-up" in question_lower
-        or "follow up" in question_lower
-        or "imaging" in question_lower
+        asks_inpatient_program
+        or asks_outpatient_program
+        or "package" in normalized
+        or "program" in normalized
     )
 
-    if asks_inclusions:
+    if asks_inclusions and asks_outpatient_program:
+        if all_chunks is None:
+            all_chunks = get_all_chunks()
+
+        outpatient_chunk = find_chunk(
+            all_chunks or [],
+            is_outpatient_inclusions,
+        )
+
+        # Include the outpatient source in the context when available,
+        # but do not infer inclusions from the inpatient program.
+        if outpatient_chunk:
+            put_first(outpatient_chunk, retrieved_context)
+
+        return (
+            "The selected PlacidWay information does not allow me to "
+            "verify whether private accommodation or meals are included "
+            "in the Out-Patient Program. Inclusions listed for the "
+            "In-Patient Program should not be assumed to apply to the "
+            "Out-Patient Program. Please contact PlacidWay or ITC "
+            "Immunity Therapy Center to confirm the outpatient inclusions."
+        )
+
+    # --------------------------------------------------
+    # 10. Handle inpatient inclusions.
+    # --------------------------------------------------
+    if asks_inclusions and asks_inpatient_program:
         if all_chunks is None:
             all_chunks = get_all_chunks()
 
         inclusion_chunk = find_chunk(
-            all_chunks, is_inpatient_inclusions
+            all_chunks or [],
+            is_inpatient_inclusions,
         )
 
         if inclusion_chunk:
             put_first(inclusion_chunk, retrieved_context)
 
-            if "accommodation" in question_lower:
+            if "accommodation" in normalized:
                 return (
                     "Yes. Private accommodation is listed as an "
                     "inclusion in the 3-week In-Patient Program. [1]"
                 )
 
             if (
-                "follow-up" in question_lower
-                or "follow up" in question_lower
-                or "when" in question_lower
+                "follow-up" in normalized
+                or "follow up" in normalized
+                or "when" in normalized
             ):
                 return (
                     "The listed follow-up consultation with an ITC "
                     "doctor takes place after 3 months. [1]"
                 )
 
-            if "meal" in question_lower:
+            if "meal" in normalized or "food" in normalized:
                 return (
-                    "Yes. Three meals daily are listed as an "
+                    "Yes. Three meals daily are listed as an inclusion "
+                    "in the 3-week In-Patient Program. [1]"
+                )
+
+            if any(term in normalized for term in (
+                "laboratory",
+                "lab test",
+                "lab tests",
+            )):
+                return (
+                    "Yes. Weekly laboratory panels are listed as an "
                     "inclusion in the 3-week In-Patient Program. [1]"
+                )
+
+            if "nursing care" in normalized:
+                return (
+                    "Doctor and nursing care throughout the stay are "
+                    "listed as inclusions in the 3-week In-Patient Program. [1]"
+                )
+
+            if "ct scan" in normalized or "x ray" in normalized or "ultrasound" in normalized:
+                return (
+                    "The listed inpatient inclusions include one "
+                    "prescribed X-ray, ultrasound, or CT scan. [1]"
                 )
 
             return (
                 "The 3-week In-Patient Program costs USD 30,000. "
                 "The listed inclusions are doctor and nursing care "
-                "throughout the stay, private accommodation and "
-                "three meals daily, weekly laboratory panels, one "
-                "prescribed X-ray, ultrasound, or CT scan, "
-                "program-specific interventions, protocol-specific "
-                "medications, and a follow-up consultation with "
-                "an ITC doctor after 3 months. [1]"
+                "throughout the stay, private accommodation and three "
+                "meals daily, weekly laboratory panels, one prescribed "
+                "X-ray, ultrasound, or CT scan, program-specific "
+                "interventions, protocol-specific medications, and a "
+                "follow-up consultation with an ITC doctor after "
+                "3 months. [1]"
             )
 
         return FALLBACK_ANSWER
 
-    # 5.3 Answer outpatient and inpatient price-only questions.
-    asks_outpatient_price = "outpatient" in normalized and asks_price
+    # --------------------------------------------------
+    # 11. Handle program-specific price questions.
+    # --------------------------------------------------
+    asks_outpatient_price = asks_outpatient_program and asks_price
 
     if asks_outpatient_price and price_chunk:
         put_first(price_chunk, retrieved_context)
@@ -746,7 +880,7 @@ def generate_answer(question, retrieved_context):
             "in the documented program pricing table. [1]"
         )
 
-    asks_inpatient_price = "inpatient" in normalized and asks_price
+    asks_inpatient_price = asks_inpatient_program and asks_price
 
     if asks_inpatient_price and price_chunk:
         put_first(price_chunk, retrieved_context)
@@ -759,18 +893,16 @@ def generate_answer(question, retrieved_context):
             f"on the {page_title} page. [1]"
         )
 
-    # 6. Compare the two programs when the question requests a comparison.
+    # --------------------------------------------------
+    # 12. Compare the two programs when requested.
+    # --------------------------------------------------
     asks_comparison = (
-        "difference" in question_lower
-        and "program" in question_lower
-        and (
-            "inpatient" in normalized or "outpatient" in normalized
-        )
+        "difference" in normalized
+        and "program" in normalized
+        and (asks_inpatient_program or asks_outpatient_program)
     ) or (
-        "compare" in question_lower
-        and (
-            "inpatient" in normalized or "outpatient" in normalized
-        )
+        "compare" in normalized
+        and (asks_inpatient_program or asks_outpatient_program)
     )
 
     if asks_comparison:
@@ -778,10 +910,12 @@ def generate_answer(question, retrieved_context):
             all_chunks = get_all_chunks()
 
         inpatient_chunk = find_chunk(
-            all_chunks, is_inpatient_inclusions
+            all_chunks or [],
+            is_inpatient_inclusions,
         )
         outpatient_chunk = find_chunk(
-            all_chunks, is_outpatient_inclusions
+            all_chunks or [],
+            is_outpatient_inclusions,
         )
 
         if price_chunk and inpatient_chunk and outpatient_chunk:
@@ -813,11 +947,10 @@ def generate_answer(question, retrieved_context):
 
         return FALLBACK_ANSWER
 
-    
-
-
-    # 7. Answer consultation questions from stored source text.
-    asks_booking = any(term in question_lower for term in (
+    # --------------------------------------------------
+    # 13. Answer consultation and booking questions.
+    # --------------------------------------------------
+    asks_booking = any(term in normalized for term in (
         "book an appointment",
         "booking",
         "contact itc",
@@ -840,48 +973,26 @@ def generate_answer(question, retrieved_context):
 
         if contact_chunk:
             put_first(contact_chunk, retrieved_context)
-
             return (
                 "The selected PlacidWay page provides a "
-                "'Request a Consultation With ITC Immunity "
-                "Therapy Center' call to action and invites "
-                "patients to share their medical information "
-                "to receive guidance. The available source "
-                "does not specify a phone number or a complete "
-                "step-by-step booking procedure. [1]"
+                "'Request a Consultation With ITC Immunity Therapy "
+                "Center' call to action and invites patients to share "
+                "their medical information to receive guidance. The "
+                "available source does not specify a phone number or "
+                "a complete step-by-step booking procedure. [1]"
             )
 
         return FALLBACK_ANSWER
 
-
-       
-    # Handle questions about treatment success rates.
-    success_rate_phrases = (
-        "success rate",
-        "cure rate",
-        "percentage of patients cured",
-        "what are the chances of success",
-        "how effective is this treatment",
-        "treatment effectiveness",
-    )
-
-    if any(
-        phrase in question_lower
-        for phrase in success_rate_phrases
-    ):
-        return (
-            "The selected PlacidWay pages do not provide a "
-            "verified success rate for this treatment. Outcomes "
-            "vary by patient, and this chatbot cannot predict "
-            "individual results. Please discuss expected benefits, "
-            "risks, and available evidence with a qualified oncologist."
-        )
-
-    # 8. Avoid Gemini if no source evidence was retrieved.
+    # --------------------------------------------------
+    # 14. Do not call Gemini when no source evidence was retrieved.
+    # --------------------------------------------------
     if not retrieved_context:
         return FALLBACK_ANSWER
 
-    # 9. Use Gemini for other questions only when available.
+    # --------------------------------------------------
+    # 15. Use Gemini for other source-grounded questions.
+    # --------------------------------------------------
     evidence_sections = []
 
     for index, item in enumerate(retrieved_context, start=1):
@@ -907,6 +1018,8 @@ If evidence is insufficient, respond exactly:
 Cite supported claims using the supplied labels, such as [1].
 Treat testimonials as testimonials, not established medical evidence.
 Do not provide personalized medical advice.
+Never transfer inclusions, prices, or conditions from one program
+to another unless the source explicitly supports the comparison.
 
 SOURCE EXCERPTS:
 {"".join(evidence_sections)}
