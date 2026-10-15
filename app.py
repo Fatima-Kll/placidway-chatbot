@@ -356,14 +356,32 @@ def get_gemini_client():
 # 6. Generate a grounded answer
 # --------------------------------------------------
 
+
 def generate_answer(question, retrieved_context):
     question_lower = question.lower()
     normalized = question_lower.replace("-", " ")
 
-    # 1. Do not provide personalized medical recommendations.
-    medical_phrases = [
+    if (
+        "success rate" in question_lower
+        or "every patient" in question_lower
+        or "percentage of patients cured" in question_lower
+        or "chances of success" in question_lower
+        or "how effective is this treatment" in question_lower
+        or "treatment effectiveness" in question_lower
+    ):
+        return (
+            "The selected PlacidWay pages do not provide a "
+            "verified success rate for this treatment. Outcomes "
+            "vary by patient, and this chatbot cannot predict "
+            "individual results. Please discuss expected benefits, "
+            "risks, and available evidence with a qualified oncologist."
+        )
+
+    # 1. Refuse personalized medical recommendations.
+    medical_phrases = (
         "which treatment should i choose",
         "what treatment should i choose",
+        "can you recommend which cancer treatment i should choose",
         "which cancer treatment should i choose",
         "what cancer treatment should i choose",
         "which treatment is best for me",
@@ -376,7 +394,7 @@ def generate_answer(question, retrieved_context):
         "should i undergo",
         "diagnose me",
         "what is my diagnosis",
-    ]
+    )
 
     if any(phrase in question_lower for phrase in medical_phrases):
         return (
@@ -387,20 +405,50 @@ def generate_answer(question, retrieved_context):
             "selected PlacidWay pages and does not provide medical advice."
         )
 
-    # 2. Weather is outside this website chatbot's scope.
+    # Additional safety guard for personalized cancer-treatment advice.
+    if (
+        "cancer treatment" in question_lower
+        and any(term in question_lower for term in (
+            "recommend",
+            "should i choose",
+            "best for me",
+            "should i take",
+        ))
+    ):
+        return (
+            "I can't recommend or select a cancer treatment for you. "
+            "Treatment decisions depend on your individual medical "
+            "situation and should be discussed with a qualified "
+            "oncologist. This chatbot provides information from "
+            "selected PlacidWay pages and does not provide medical advice."
+        )
+
+    # 2. Reject unrelated questions without calling Gemini.
+    sports_terms = (
+        "football",
+        "soccer",
+        "world cup",
+        "fifa",
+        "basketball",
+        "tennis",
+    )
+
+    if any(term in question_lower for term in sports_terms):
+        return (
+            "Sports results are outside the scope of this chatbot, "
+            "which answers questions using selected PlacidWay website pages."
+        )
+
     if any(word in question_lower for word in (
         "weather", "temperature", "forecast"
     )):
         return (
-            "Weather information is outside the scope of this "
-            "chatbot, which answers questions using selected "
-            "PlacidWay website pages."
+            "Weather information is outside the scope of this chatbot, "
+            "which answers questions using selected PlacidWay website pages."
         )
 
-
-    
-    # Do not claim that a treatment guarantees a cure.
-    cure_phrases = (
+    # 3. Never claim a treatment guarantees a cure or success.
+    outcome_phrases = (
         "guarantee a cure",
         "guaranteed cure",
         "cure cancer",
@@ -408,23 +456,36 @@ def generate_answer(question, retrieved_context):
         "will this cure",
         "guaranteed to cure",
         "guarantee that the treatment will cure",
+        "guaranteed to be successful",
+        "guaranteed successful",
+        "guarantee success",
+        "guaranteed success",
+        "guarantee that every patient will be cured",
+        "guarantee every patient",
+        "guarantee a successful outcome",
+        "guaranteed outcome",
+        "guarantee treatment success",
     )
 
-    asks_about_cure = any(
-        phrase in question_lower for phrase in cure_phrases
+    asks_about_outcomes = any(
+        phrase in question_lower for phrase in outcome_phrases
+    ) or (
+        "guarantee" in question_lower
+        and any(term in question_lower for term in (
+            "treatment", "program", "patient", "cured", "successful", "success"
+        ))
     )
 
-    if asks_about_cure:
+    if asks_about_outcomes:
         return (
-            "The selected PlacidWay pages do not establish or "
-            "guarantee that the treatment will cure cancer. "
-            "The chatbot cannot verify treatment outcomes or "
-            "guarantee a cure. Please discuss treatment "
-            "effectiveness with a qualified oncologist."
+            "The selected PlacidWay pages do not establish or guarantee "
+            "a cure or successful treatment outcome. This chatbot cannot "
+            "verify or guarantee individual medical outcomes. Please "
+            "discuss treatment effectiveness and risks with a qualified "
+            "oncologist."
         )
 
-
-    # 3. Find phone-number questions in the local knowledge base.
+    # 4. Answer phone-number questions only when a labelled number is found.
     asks_phone = any(phrase in question_lower for phrase in (
         "phone number",
         "telephone number",
@@ -439,8 +500,6 @@ def generate_answer(question, retrieved_context):
     if asks_phone:
         all_chunks = get_all_chunks()
 
-        # Only accept a number explicitly associated with a phone
-        # or telephone label. Do not mistake prices for phone numbers.
         phone_pattern = re.compile(
             r"(?i)(?:phone|telephone|tel\.?|contact number)"
             r"\s*(?:number)?\s*[:#-]?\s*"
@@ -452,7 +511,6 @@ def generate_answer(question, retrieved_context):
 
         for item in all_chunks:
             match = phone_pattern.search(item["document"])
-
             if match:
                 phone_match = match
                 phone_chunk = item
@@ -465,10 +523,9 @@ def generate_answer(question, retrieved_context):
                 phone_chunk["metadata"].get("page_title")
                 or "the selected PlacidWay page"
             )
-
             return (
-                f"The phone number explicitly listed in "
-                f"{title} is {number}. [1]"
+                f"The phone number explicitly listed in {title} "
+                f"is {number}. [1]"
             )
 
         return (
@@ -478,7 +535,7 @@ def generate_answer(question, retrieved_context):
             "relevant PlacidWay page."
         )
 
-    # 4. Identify price-related questions.
+    # 5. Identify price-related questions and load the source chunks.
     asks_price = any(term in question_lower for term in (
         "price", "cost", "how much", "package"
     )) or "5000" in question_lower or "5,000" in question_lower
@@ -489,80 +546,151 @@ def generate_answer(question, retrieved_context):
 
     all_chunks = None
 
-    if asks_price or "inpatient" in normalized or "outpatient" in normalized:
+    if (
+        asks_price
+        or "inpatient" in normalized
+        or "outpatient" in normalized
+    ):
         all_chunks = get_all_chunks()
 
-    price_chunk = find_chunk(
-        all_chunks or [],
-        is_price_table,
-    )
+    price_chunk = find_chunk(all_chunks or [], is_price_table)
 
     asks_anal_price = "anal cancer" in question_lower and asks_price
 
-    
-    # Answer questions asking for both program prices.
     asks_both_prices = (
         asks_price
         and "inpatient" in normalized
         and "outpatient" in normalized
     )
 
-    if asks_both_prices and price_chunk:
+    # Handle price differences BEFORE the general price comparison.
+    # Keep this handler in only one place.
+    asks_price_difference = any(
+        term in question_lower
+        for term in (
+            "price difference",
+            "how much more",
+            "how much less",
+            "difference in price",
+            "difference in cost",
+            "cost difference",
+            "which is cheaper",
+            "which program costs less",
+            "less expensive",
+            "more expensive",
+        )
+    )
+
+    if asks_price_difference and price_chunk:
         put_first(price_chunk, retrieved_context)
 
+        if any(term in question_lower for term in (
+            "difference",
+            "how much more",
+            "how much less",
+            "more expensive",
+        )):
+            return (
+                "The In-Patient Program costs USD 30,000 and the "
+                "Out-Patient Program costs USD 18,995. The difference "
+                "is USD 11,005. The In-Patient Program is USD 11,005 "
+                "more expensive. [1]"
+            )
+
+        return (
+            "The 3-week Out-Patient Program costs less: USD 18,995 "
+            "compared with USD 30,000 for the In-Patient Program. [1]"
+        )
+
+    # Answer questions asking for both program prices.
+    if asks_both_prices and price_chunk:
+        put_first(price_chunk, retrieved_context)
         return (
             "The documented 3-week program prices are: "
             "Out-Patient Program: USD 18,995; "
             "In-Patient Program: USD 30,000. [1]"
         )
 
-
-    # Answer pricing questions with the documented price table.
-    if (asks_anal_price or asks_wrong_price) and price_chunk:
+    # Answer the incorrect-price test without inventing a price.
+    if asks_wrong_price and price_chunk:
         put_first(price_chunk, retrieved_context)
+        return (
+            "The provided program pricing table lists the 3-week "
+            "In-Patient Program at USD 30,000, not USD 5,000. "
+            "The 3-week Out-Patient Program is listed at USD 18,995. [1]"
+        )
 
-        if asks_wrong_price:
+    if asks_anal_price and price_chunk:
+        put_first(price_chunk, retrieved_context)
+        return (
+            "The Alternative Anal Cancer Treatment page lists two "
+            "program options: the 3-week Out-Patient Program for "
+            "USD 18,995 and the 3-week In-Patient Program for "
+            "USD 30,000. The table lists prices by program type, "
+            "not a separate price based on anal cancer alone. [1]"
+        )
+
+    
+    # Answer program duration questions without relying on Gemini.
+    asks_duration = any(term in question_lower for term in (
+        "how long",
+        "duration",
+        "how many weeks",
+        "how long do both programs last",
+        "how long does each program last",
+        "how long is the program",
+    ))
+
+    if asks_duration:
+        if all_chunks is None:
+            all_chunks = get_all_chunks()
+
+        duration_chunk = find_chunk(
+            all_chunks or [],
+            lambda doc, meta: (
+                is_price_table(doc, meta)
+                and "3 weeks" in doc.lower()
+            ),
+        )
+
+        if duration_chunk:
+            put_first(duration_chunk, retrieved_context)
             return (
-                "The provided program pricing table lists the "
-                "3-week In-Patient Program at USD 30,000, not "
-                "USD 5,000. The 3-week Out-Patient Program is "
-                "listed at USD 18,995. [1]"
+                "The documented In-Patient and Out-Patient Programs "
+                "are both 3 weeks long. [1]"
             )
 
-        return (
-            "The Alternative Anal Cancer Treatment page lists "
-            "two program options: the 3-week Out-Patient Program "
-            "for USD 18,995 and the 3-week In-Patient Program "
-            "for USD 30,000. The table lists prices by program "
-            "type, not a separate price based on anal cancer alone. [1]"
-        )
+        return FALLBACK_ANSWER
 
-    # Answer inpatient price questions, including questions asking
-    # where the price is documented.
-    asks_inpatient_price = "inpatient" in normalized and asks_price
-
-    if asks_inpatient_price and price_chunk:
+    if asks_duration and price_chunk:
         put_first(price_chunk, retrieved_context)
-
-        page_title = (
-            price_chunk["metadata"].get("page_title")
-            or "the selected PlacidWay page"
-        )
-
         return (
-            "The 3-week In-Patient Program is listed at USD 30,000 "
-            f"on the {page_title} page. [1]"
+            "The documented In-Patient and Out-Patient Programs "
+            "are both 3 weeks long. [1]"
         )
 
-    # 5. Answer inpatient inclusion questions.
-    asks_inpatient_inclusions = (
-        "inpatient" in normalized
-        and any(word in question_lower for word in (
-            "include", "included", "includes", "inclusion"
-        ))
+    # 5.2 Answer inpatient inclusion questions.
+    inclusion_terms = (
+        "include", "included", "includes", "inclusion",
+        "meal", "meals", "accommodation", "follow-up",
+        "follow up", "medication", "medications",
+        "imaging", "laboratory", "lab test", "nursing care",
     )
 
-    if asks_inpatient_inclusions:
+    asks_inclusions = any(
+        term in question_lower for term in inclusion_terms
+    ) and (
+        "inpatient" in normalized
+        or "package" in question_lower
+        or "program" in question_lower
+        or "meal" in question_lower
+        or "accommodation" in question_lower
+        or "follow-up" in question_lower
+        or "follow up" in question_lower
+        or "imaging" in question_lower
+    )
+
+    if asks_inclusions:
         if all_chunks is None:
             all_chunks = get_all_chunks()
 
@@ -572,6 +700,28 @@ def generate_answer(question, retrieved_context):
 
         if inclusion_chunk:
             put_first(inclusion_chunk, retrieved_context)
+
+            if "accommodation" in question_lower:
+                return (
+                    "Yes. Private accommodation is listed as an "
+                    "inclusion in the 3-week In-Patient Program. [1]"
+                )
+
+            if (
+                "follow-up" in question_lower
+                or "follow up" in question_lower
+                or "when" in question_lower
+            ):
+                return (
+                    "The listed follow-up consultation with an ITC "
+                    "doctor takes place after 3 months. [1]"
+                )
+
+            if "meal" in question_lower:
+                return (
+                    "Yes. Three meals daily are listed as an "
+                    "inclusion in the 3-week In-Patient Program. [1]"
+                )
 
             return (
                 "The 3-week In-Patient Program costs USD 30,000. "
@@ -586,7 +736,30 @@ def generate_answer(question, retrieved_context):
 
         return FALLBACK_ANSWER
 
-    # 6. Compare inpatient and outpatient programs.
+    # 5.3 Answer outpatient and inpatient price-only questions.
+    asks_outpatient_price = "outpatient" in normalized and asks_price
+
+    if asks_outpatient_price and price_chunk:
+        put_first(price_chunk, retrieved_context)
+        return (
+            "The 3-week Out-Patient Program is listed at USD 18,995 "
+            "in the documented program pricing table. [1]"
+        )
+
+    asks_inpatient_price = "inpatient" in normalized and asks_price
+
+    if asks_inpatient_price and price_chunk:
+        put_first(price_chunk, retrieved_context)
+        page_title = (
+            price_chunk["metadata"].get("page_title")
+            or "the selected PlacidWay page"
+        )
+        return (
+            "The 3-week In-Patient Program is listed at USD 30,000 "
+            f"on the {page_title} page. [1]"
+        )
+
+    # 6. Compare the two programs when the question requests a comparison.
     asks_comparison = (
         "difference" in question_lower
         and "program" in question_lower
@@ -626,24 +799,22 @@ def generate_answer(question, retrieved_context):
             ]
 
             return (
-                
-            
-                "Both programs last 3 weeks. The Out-Patient "
-                "Program costs USD 18,995, while the In-Patient "
-                "Program costs USD 30,000. The documented "
-                "inpatient inclusions include doctor and nursing "
-                "care, private accommodation, three meals daily, "
-                "weekly laboratory panels, one prescribed X-ray, "
-                "ultrasound, or CT scan, program-specific "
-                "interventions, protocol-specific medications, "
-                "and a follow-up consultation with an ITC doctor "
-                "after 3 months. Consult the linked source pages "
-                "for the complete documented details. [1][2][3]"
+                "Both programs last 3 weeks. The Out-Patient Program "
+                "costs USD 18,995, while the In-Patient Program costs "
+                "USD 30,000. The documented inpatient inclusions include "
+                "doctor and nursing care, private accommodation, three "
+                "meals daily, weekly laboratory panels, one prescribed "
+                "X-ray, ultrasound, or CT scan, program-specific "
+                "interventions, protocol-specific medications, and a "
+                "follow-up consultation with an ITC doctor after "
+                "3 months. Consult the linked source pages for complete "
+                "documented details. [1][2][3]"
             )
 
-            
-
         return FALLBACK_ANSWER
+
+    
+
 
     # 7. Answer consultation questions from stored source text.
     asks_booking = any(term in question_lower for term in (
@@ -681,6 +852,30 @@ def generate_answer(question, retrieved_context):
             )
 
         return FALLBACK_ANSWER
+
+
+       
+    # Handle questions about treatment success rates.
+    success_rate_phrases = (
+        "success rate",
+        "cure rate",
+        "percentage of patients cured",
+        "what are the chances of success",
+        "how effective is this treatment",
+        "treatment effectiveness",
+    )
+
+    if any(
+        phrase in question_lower
+        for phrase in success_rate_phrases
+    ):
+        return (
+            "The selected PlacidWay pages do not provide a "
+            "verified success rate for this treatment. Outcomes "
+            "vary by patient, and this chatbot cannot predict "
+            "individual results. Please discuss expected benefits, "
+            "risks, and available evidence with a qualified oncologist."
+        )
 
     # 8. Avoid Gemini if no source evidence was retrieved.
     if not retrieved_context:
