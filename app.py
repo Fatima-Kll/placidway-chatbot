@@ -459,6 +459,22 @@ def generate_answer(question, retrieved_context):
             "which answers questions using selected PlacidWay website pages."
         )
 
+    
+    # Reject clearly unrelated general-knowledge questions.
+    unrelated_patterns = (
+        "what is the capital of ",
+        "who is the president of ",
+        "what is the population of ",
+        "who won the nobel prize",
+    )
+
+    if any(pattern in normalized for pattern in unrelated_patterns):
+        return (
+            "That question is outside the scope of this chatbot. "
+            "I answer questions using the selected PlacidWay website pages."
+        )
+
+
     # --------------------------------------------------
     # 4. Handle treatment cure and outcome questions safely.
     # --------------------------------------------------
@@ -737,6 +753,36 @@ def generate_answer(question, retrieved_context):
             "program page for confirmation."
         )
 
+
+    
+    # Answer questions about weekly laboratory panels.
+    if any(term in normalized for term in (
+        "laboratory tests",
+        "laboratory test",
+        "lab tests",
+        "lab test",
+        "blood tests",
+        "tests every week",
+        "tests each week",
+    )):
+        all_chunks = get_all_chunks()
+        lab_chunk = find_chunk(
+            all_chunks,
+            is_inpatient_inclusions,
+        )
+
+        if lab_chunk:
+            put_first(lab_chunk, retrieved_context)
+            return (
+                "Yes. Weekly laboratory panels are listed as an "
+                "inclusion in the 3-week In-Patient Program. [1]"
+            )
+
+        return (
+            "I couldn't verify the laboratory testing schedule "
+            "in the selected PlacidWay source information."
+        )
+
     # --------------------------------------------------
     # 9. Handle outpatient inclusions separately.
     #    Never reuse inpatient inclusions for outpatient questions.
@@ -946,6 +992,45 @@ def generate_answer(question, retrieved_context):
             )
 
         return FALLBACK_ANSWER
+
+
+   
+    # Answer follow-up timing questions before the booking handler.
+    asks_follow_up = (
+        any(term in normalized for term in (
+            "follow-up",
+            "follow up",
+            "followup",
+        ))
+        or (
+            "after completing treatment" in normalized
+            and "consultation" in normalized
+        )
+        or (
+            "after treatment" in normalized
+            and "consultation" in normalized
+        )
+    )
+
+    if asks_follow_up:
+        all_chunks = get_all_chunks()
+        follow_up_chunk = find_chunk(
+            all_chunks,
+            is_inpatient_inclusions,
+        )
+
+        if follow_up_chunk:
+            put_first(follow_up_chunk, retrieved_context)
+            return (
+                "The documented In-Patient Program includes a "
+                "follow-up consultation with an ITC doctor after "
+                "3 months. [1]"
+            )
+
+        return (
+            "I couldn't verify the follow-up consultation details "
+            "in the selected PlacidWay source information."
+        )
 
     # --------------------------------------------------
     # 13. Answer consultation and booking questions.
